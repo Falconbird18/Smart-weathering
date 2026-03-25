@@ -18,7 +18,7 @@ Smart Weathering is an addon for Blender that provides an easy-to-use node group
 
 1. Download the zip file
 2. In Blender: Edit → Preferences → Add-ons → Install...
-3. Select the .zip you created, enable the add-on, then use the "Weathering" panel in the 3D View N-panel.
+3. Select the .zip file, enable the add-on, then use the "Weathering" panel in the 3D View N-panel.
 
 ## Usage
 
