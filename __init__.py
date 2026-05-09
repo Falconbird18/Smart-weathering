@@ -199,32 +199,67 @@ class OBJECT_OT_ReloadWeatheringNodes(bpy.types.Operator):
             return {"CANCELLED"}
 
         nodes = mat.node_tree.nodes
+        links = mat.node_tree.links
         weather_node = nodes.get("WeatheringNodeInstance")
 
         if not weather_node:
             self.report({"INFO"}, "No weathering node found to reload.")
             return {"FINISHED"}
 
-        # Store the current node tree reference
-        old_node_tree = weather_node.node_tree
+        group_name = "Smart Weathering"
+        gn_group_name = "Get Bounding Box"
 
         # Re-sync the node groups (will use existing ones if present)
-        sync_node_group("Get Bounding Box")
-        sync_node_group("Smart Weathering")
+        gn_group = sync_node_group(gn_group_name)
+        shader_group = sync_node_group(group_name)
 
-        # Update the weather node to use the reloaded group
-        shader_group = bpy.data.node_groups.get("Smart Weathering")
-        if shader_group:
-            weather_node.node_tree = shader_group
+        if not shader_group:
+            self.report({"ERROR"}, "Failed to load Smart Weathering node group.")
+            return {"CANCELLED"}
 
-        # Update modifier if it exists
-        mod = obj.modifiers.get("SmartWeathering_Bounds")
-        if mod:
-            gn_group = bpy.data.node_groups.get("Get Bounding Box")
-            if gn_group:
-                mod.node_group = gn_group
+        # Fix: Ensure geometry nodes modifier exists and is set up
+        if gn_group:
+            mod = obj.modifiers.get("SmartWeathering_Bounds")
+            if not mod:
+                # Create the modifier if it's missing
+                mod = obj.modifiers.new(name="SmartWeathering_Bounds", type="NODES")
+                try:
+                    bpy.ops.object.modifier_move_to_index(modifier=mod.name, index=0)
+                except:
+                    pass
+            mod.node_group = gn_group
+        else:
+            # If we couldn't load the geometry nodes group, remove modifier if it exists
+            mod = obj.modifiers.get("SmartWeathering_Bounds")
+            if mod:
+                obj.modifiers.remove(mod)
 
-        self.report({"INFO"}, "Reloaded weathering nodes.")
+        # Fix: Ensure shader node is properly connected
+        output_node = next(
+            (n for n in nodes if n.type == "OUTPUT_MATERIAL" and n.is_active_output),
+            None,
+        )
+
+        if output_node:
+            surface_input = output_node.inputs.get("Surface")
+            if surface_input:
+                # Check if weather node is already connected to output
+                is_connected = any(
+                    link.from_node == weather_node for link in surface_input.links
+                )
+
+                if not is_connected:
+                    # Reconnect the weather node
+                    if surface_input.is_linked:
+                        # Save the original input before replacing
+                        old_link = surface_input.links[0]
+                        links.new(old_link.from_socket, weather_node.inputs[0])
+                    links.new(weather_node.outputs[0], surface_input)
+
+        # Update the weather node group reference
+        weather_node.node_tree = shader_group
+
+        self.report({"INFO"}, "Reloaded and fixed weathering nodes.")
         return {"FINISHED"}
 
 
