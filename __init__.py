@@ -20,46 +20,45 @@ def get_library_path():
 
 
 def sync_node_group(group_name):
-    """Syncs node group: loads from library if not present, otherwise uses existing."""
+    """Syncs node group from assets.blend. Handles nested groups safely."""
     lib_path = get_library_path()
     if not os.path.exists(lib_path):
         return None
 
-    # Check if group already exists by exact name or with .00X suffix
-    existing_group = None
-    for grp in bpy.data.node_groups:
-        if grp.name == group_name or re.match(
-            rf"^{re.escape(group_name)}\.\d+$", grp.name
-        ):
-            existing_group = grp
-            break
+    # Return existing group if available
+    existing = bpy.data.node_groups.get(group_name)
+    if existing:
+        return existing
 
-    # If we found an existing group, rename it to base name and use it
-    if existing_group:
-        if existing_group.name != group_name:
-            existing_group.name = group_name
-        return existing_group
+    # Clean old duplicates before loading
+    for grp in list(bpy.data.node_groups):
+        if re.match(rf"^{re.escape(group_name)}\.\d+$", grp.name):
+            bpy.data.node_groups.remove(grp)
 
-    # Otherwise, load from library
-    existing_names = {g.name for g in bpy.data.node_groups}
-
+    # Load the group (Blender will auto-pull nested groups)
     with bpy.data.libraries.load(lib_path, link=False) as (data_from, data_to):
-        if group_name in data_from.node_groups:
-            data_to.node_groups = [group_name]
-        else:
+        if group_name not in data_from.node_groups:
             return None
+        data_to.node_groups = [group_name]  # ← Must be a list!
 
-    # Find the newly loaded group
-    new_groups = [g for g in bpy.data.node_groups if g.name not in existing_names]
-    if not new_groups:
-        return None
+    # Blender sometimes renames things on collision, so we search carefully
+    new_grp = bpy.data.node_groups.get(group_name)
 
-    new_grp = new_groups[0]
+    if not new_grp:
+        # Fallback: look for any group that was likely the one we requested
+        for grp in bpy.data.node_groups:
+            if (
+                grp.name == group_name
+                or grp.name.startswith(group_name + ".")
+                or
+                # Heuristic: the main group is usually the one containing "Smart Weathering"
+                (group_name == "Smart Weathering" and "Smart Weathering" in grp.name)
+            ):
+                new_grp = grp
+                break
 
-    # Rename to base name if it has a suffix
-    match = re.search(r"\.\d+$", new_grp.name)
-    if match:
-        new_grp.name = new_grp.name[: match.start()]
+    if new_grp and new_grp.name != group_name:
+        new_grp.name = group_name
 
     return new_grp
 
@@ -102,7 +101,6 @@ class OBJECT_OT_ToggleWeathering(bpy.types.Operator):
     def execute(self, context):
         obj = context.active_object
         mat = obj.active_material
-
         if not mat or not mat.use_nodes:
             self.report({"WARNING"}, "Active material requires 'Use Nodes'.")
             return {"CANCELLED"}
