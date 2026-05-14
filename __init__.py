@@ -8,10 +8,23 @@ bl_info = {
     "category": "Material",
 }
 
+import importlib
 import os
 import re
+import sys
 
 import bpy
+
+# ====================== AUTO-RELOAD ======================
+# Define modules to reload (add submodules here as needed)
+modules_to_reload = [
+    __name__,  # Reload the main addon module
+]
+
+# Reload existing modules
+for module_name in modules_to_reload:
+    if module_name in sys.modules:
+        importlib.reload(sys.modules[module_name])
 
 
 # ====================== PREFERENCES ======================
@@ -236,7 +249,7 @@ class OBJECT_OT_ReloadWeatheringNodes(bpy.types.Operator):
         group_name = "Smart Weathering"
         gn_group_name = "Get Bounding Box"
 
-        # Optional: Extra cleanup for misnamed groups
+        # Extra cleanup for misnamed groups
         for name in (group_name, gn_group_name):
             for grp in list(bpy.data.node_groups):
                 if grp.name.startswith(name + ".") and grp.users == 0:
