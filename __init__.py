@@ -64,19 +64,24 @@ def get_library_path():
 
 
 # ====================== SYNC FUNCTION ======================
-def sync_node_group(group_name):
+def sync_node_group(group_name, force_reload=False):
     """Syncs node group from assets.blend. Handles nested groups safely."""
     lib_path = get_library_path()
     if not os.path.exists(lib_path):
         print(f"Warning: Assets file not found at {lib_path}")
         return None
 
-    # Return existing group if available
+    # If forcing reload, remove the existing group first
     existing = bpy.data.node_groups.get(group_name)
+    if force_reload and existing:
+        bpy.data.node_groups.remove(existing)
+        existing = None
+
+    # If it exists and we aren't forcing a reload, just return it
     if existing:
         return existing
 
-    # Clean old duplicates before loading
+    # Clean old duplicates before loading (e.g., Smart Weathering.001)
     for grp in list(bpy.data.node_groups):
         if re.match(rf"^{re.escape(group_name)}\.\d+$", grp.name):
             bpy.data.node_groups.remove(grp)
@@ -89,17 +94,21 @@ def sync_node_group(group_name):
         data_to.node_groups = [group_name]
 
     # Find the correct group after loading
-    new_grp = bpy.data.node_groups.get(group_name)
+    # data_to.node_groups[0] will be the newly appended datablock
+    new_grp = data_to.node_groups[0] if data_to.node_groups else None
 
     if not new_grp:
-        # Fallback search
+        # Fallback search just in case the datablock list is empty
         for grp in bpy.data.node_groups:
             if grp.name == group_name or grp.name.startswith(group_name + "."):
                 new_grp = grp
                 break
 
-    if new_grp and new_grp.name != group_name:
-        new_grp.name = group_name
+    if not new_grp:
+        return None
+
+    # Ensure the new group gets the clean, original name
+    new_grp.name = group_name
 
     return new_grp
 
@@ -142,7 +151,6 @@ class OBJECT_OT_ToggleWeathering(bpy.types.Operator):
     bl_label = "Toggle Weathering"
 
     def execute(self, context):
-        # ... [Your existing toggle code - unchanged] ...
         obj = context.active_object
         mat = obj.active_material
         if not mat or not mat.use_nodes:
@@ -157,7 +165,7 @@ class OBJECT_OT_ToggleWeathering(bpy.types.Operator):
         gn_group_name = "Get Bounding Box"
 
         if weather_node:
-            # Remove logic (unchanged)
+            # Remove logic
             mod = obj.modifiers.get("SmartWeathering_Bounds")
             if mod:
                 obj.modifiers.remove(mod)
@@ -231,7 +239,6 @@ class OBJECT_OT_ReloadWeatheringNodes(bpy.types.Operator):
     bl_label = "Reload Weathering Nodes"
 
     def execute(self, context):
-        # ... [Your existing reload code - unchanged except for the cleanup part] ...
         obj = context.active_object
         mat = obj.active_material
         if not mat or not mat.use_nodes:
@@ -239,7 +246,6 @@ class OBJECT_OT_ReloadWeatheringNodes(bpy.types.Operator):
             return {"CANCELLED"}
 
         nodes = mat.node_tree.nodes
-        links = mat.node_tree.links
         weather_node = nodes.get("WeatheringNodeInstance")
 
         if not weather_node:
@@ -249,14 +255,15 @@ class OBJECT_OT_ReloadWeatheringNodes(bpy.types.Operator):
         group_name = "Smart Weathering"
         gn_group_name = "Get Bounding Box"
 
-        # Extra cleanup for misnamed groups
+        # Extra cleanup for misnamed orphan groups
         for name in (group_name, gn_group_name):
             for grp in list(bpy.data.node_groups):
                 if grp.name.startswith(name + ".") and grp.users == 0:
                     bpy.data.node_groups.remove(grp)
 
-        gn_group = sync_node_group(gn_group_name)
-        shader_group = sync_node_group(group_name)
+        # Force reload fresh node groups from assets.blend
+        gn_group = sync_node_group(gn_group_name, force_reload=True)
+        shader_group = sync_node_group(group_name, force_reload=True)
 
         if not shader_group:
             self.report({"ERROR"}, "Failed to load Smart Weathering node group.")
@@ -273,7 +280,8 @@ class OBJECT_OT_ReloadWeatheringNodes(bpy.types.Operator):
                     pass
             mod.node_group = gn_group
 
-        # Update shader node
+        # Re-fetch weather_node reference (old reference may be invalid after reload)
+        weather_node = nodes.get("WeatheringNodeInstance")
         if weather_node:
             weather_node.node_tree = shader_group
 
