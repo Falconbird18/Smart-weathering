@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Smart Weathering",
     "author": "Austin Tallent (Falconbird18)",
-    "version": (0, 4),
+    "version": (0, 5),
     "blender": (5, 1, 0),
     "location": "View3D > N-Panel > Weathering",
     "description": "Smart weathering tool that is powerful and easy to use.",
@@ -10,7 +10,6 @@ bl_info = {
 
 import importlib
 import os
-import re
 import sys
 
 import bpy
@@ -63,54 +62,36 @@ def get_library_path():
     return os.path.join(addon_dir, "assets.blend")
 
 
-# ====================== SYNC FUNCTION ======================
-def sync_node_group(group_name, force_reload=False):
-    """Syncs node group from assets.blend. Handles nested groups safely."""
+# ====================== LINK FUNCTION ======================
+def get_linked_node_group(group_name):
+    """
+    Get or link a node group from assets.blend.
+    Returns the linked node group, or None if not found.
+    """
     lib_path = get_library_path()
     if not os.path.exists(lib_path):
         print(f"Warning: Assets file not found at {lib_path}")
         return None
 
-    # If forcing reload, remove the existing group first
-    existing = bpy.data.node_groups.get(group_name)
-    if force_reload and existing:
-        bpy.data.node_groups.remove(existing)
-        existing = None
+    # Ensure the library is loaded
+    lib = None
+    for library in bpy.data.libraries:
+        if os.path.abspath(library.filepath) == os.path.abspath(lib_path):
+            lib = library
+            break
 
-    # If it exists and we aren't forcing a reload, just return it
-    if existing:
-        return existing
-
-    # Clean old duplicates before loading (e.g., Smart Weathering.001)
-    for grp in list(bpy.data.node_groups):
-        if re.match(rf"^{re.escape(group_name)}\.\d+$", grp.name):
-            bpy.data.node_groups.remove(grp)
-
-    # Load the group
-    with bpy.data.libraries.load(lib_path, link=False) as (data_from, data_to):
+    # Link the node group
+    with bpy.data.libraries.load(lib_path, link=True) as (data_from, data_to):
         if group_name not in data_from.node_groups:
             print(f"Warning: Node group '{group_name}' not found in {lib_path}")
             return None
         data_to.node_groups = [group_name]
 
-    # Find the correct group after loading
-    # data_to.node_groups[0] will be the newly appended datablock
-    new_grp = data_to.node_groups[0] if data_to.node_groups else None
+    # Return the linked node group
+    if data_to.node_groups:
+        return data_to.node_groups[0]
 
-    if not new_grp:
-        # Fallback search just in case the datablock list is empty
-        for grp in bpy.data.node_groups:
-            if grp.name == group_name or grp.name.startswith(group_name + "."):
-                new_grp = grp
-                break
-
-    if not new_grp:
-        return None
-
-    # Ensure the new group gets the clean, original name
-    new_grp.name = group_name
-
-    return new_grp
+    return None
 
 
 # ====================== UI PANEL ======================
@@ -161,14 +142,12 @@ class OBJECT_OT_ToggleWeathering(bpy.types.Operator):
         links = mat.node_tree.links
         weather_node = nodes.get("WeatheringNodeInstance")
 
-        group_name = "Smart Weathering"
-        gn_group_name = "Get Bounding Box"
-
         if weather_node:
-            # Remove logic
+            # Remove logic - simply remove the node, no data cleanup needed
             mod = obj.modifiers.get("SmartWeathering_Bounds")
             if mod:
                 obj.modifiers.remove(mod)
+
             output_node = next(
                 (
                     n
@@ -180,15 +159,18 @@ class OBJECT_OT_ToggleWeathering(bpy.types.Operator):
             if output_node:
                 surface_input = output_node.inputs.get("Surface")
                 if surface_input:
+                    # If the weathering node has input, reconnect it
                     if weather_node.inputs[0].is_linked:
                         source_socket = weather_node.inputs[0].links[0].from_socket
                         links.new(source_socket, surface_input)
                     elif surface_input.is_linked:
                         links.remove(surface_input.links[0])
+
+            # Simply remove the node from the tree
             nodes.remove(weather_node)
             self.report({"INFO"}, "Weathering removed.")
         else:
-            # Add logic
+            # Add logic - link shader nodes from assets.blend
             output_node = next(
                 (
                     n
@@ -199,9 +181,11 @@ class OBJECT_OT_ToggleWeathering(bpy.types.Operator):
             )
             if not output_node:
                 return {"CANCELLED"}
+
             surface_input = output_node.inputs.get("Surface")
 
-            gn_group = sync_node_group(gn_group_name)
+            # Add geometry nodes modifier with linked node group
+            gn_group = get_linked_node_group("Get Bounding Box")
             if gn_group:
                 mod = obj.modifiers.get("SmartWeathering_Bounds") or obj.modifiers.new(
                     name="SmartWeathering_Bounds", type="NODES"
@@ -212,11 +196,13 @@ class OBJECT_OT_ToggleWeathering(bpy.types.Operator):
                 except:
                     pass
 
-            shader_group = sync_node_group(group_name)
+            # Get linked shader group
+            shader_group = get_linked_node_group("Smart Weathering")
             if not shader_group:
-                self.report({"ERROR"}, "Failed to load 'Smart Weathering' node group.")
+                self.report({"ERROR"}, "Failed to link 'Smart Weathering' node group.")
                 return {"CANCELLED"}
 
+            # Create shader node with linked group
             weather_node = nodes.new(type="ShaderNodeGroup")
             weather_node.name = "WeatheringNodeInstance"
             weather_node.node_tree = shader_group
@@ -225,6 +211,7 @@ class OBJECT_OT_ToggleWeathering(bpy.types.Operator):
                 output_node.location.y,
             )
 
+            # Connect the shader node into the material
             if surface_input.is_linked:
                 old_link = surface_input.links[0]
                 links.new(old_link.from_socket, weather_node.inputs[0])
@@ -239,54 +226,16 @@ class OBJECT_OT_ReloadWeatheringNodes(bpy.types.Operator):
     bl_label = "Reload Weathering Nodes"
 
     def execute(self, context):
-        obj = context.active_object
-        mat = obj.active_material
-        if not mat or not mat.use_nodes:
-            self.report({"WARNING"}, "Active material requires 'Use Nodes'.")
-            return {"CANCELLED"}
-
-        nodes = mat.node_tree.nodes
-        weather_node = nodes.get("WeatheringNodeInstance")
-
-        if not weather_node:
-            self.report({"INFO"}, "No weathering node found.")
+        # Simply tell Blender to reload linked libraries
+        # This is done by calling the appropriate operator
+        try:
+            for library in bpy.data.libraries:
+                library.reload()
+            self.report({"INFO"}, "Linked libraries reloaded.")
             return {"FINISHED"}
-
-        group_name = "Smart Weathering"
-        gn_group_name = "Get Bounding Box"
-
-        # Extra cleanup for misnamed orphan groups
-        for name in (group_name, gn_group_name):
-            for grp in list(bpy.data.node_groups):
-                if grp.name.startswith(name + ".") and grp.users == 0:
-                    bpy.data.node_groups.remove(grp)
-
-        # Force reload fresh node groups from assets.blend
-        gn_group = sync_node_group(gn_group_name, force_reload=True)
-        shader_group = sync_node_group(group_name, force_reload=True)
-
-        if not shader_group:
-            self.report({"ERROR"}, "Failed to load Smart Weathering node group.")
+        except Exception as e:
+            self.report({"ERROR"}, f"Failed to reload libraries: {str(e)}")
             return {"CANCELLED"}
-
-        # Update geometry nodes modifier
-        if gn_group:
-            mod = obj.modifiers.get("SmartWeathering_Bounds")
-            if not mod:
-                mod = obj.modifiers.new(name="SmartWeathering_Bounds", type="NODES")
-                try:
-                    bpy.ops.object.modifier_move_to_index(modifier=mod.name, index=0)
-                except:
-                    pass
-            mod.node_group = gn_group
-
-        # Re-fetch weather_node reference (old reference may be invalid after reload)
-        weather_node = nodes.get("WeatheringNodeInstance")
-        if weather_node:
-            weather_node.node_tree = shader_group
-
-        self.report({"INFO"}, "Weathering nodes reloaded successfully.")
-        return {"FINISHED"}
 
 
 # ====================== REGISTER ======================
