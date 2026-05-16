@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Smart Weathering",
     "author": "Austin Tallent (Falconbird18)",
-    "version": (0, 5),
+    "version": (0, 3),
     "blender": (5, 1, 0),
     "location": "View3D > N-Panel > Weathering",
     "description": "Smart weathering tool that is powerful and easy to use.",
