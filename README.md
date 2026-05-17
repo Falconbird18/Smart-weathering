@@ -7,6 +7,7 @@ Smart Weathering is an addon for Blender that provides an easy-to-use node group
 - Toggle weathering on/off 
 - Minimal UI in the 3D View N-panel under the "Weathering" tab for quick access.
 - Edge wear, Ambient Occlusion, Scratches, Fingerprints, and dust (more to come).
+- Additive and Subtractive masking support with any color channel support.
 
 ## Requirements
 
@@ -26,8 +27,7 @@ Smart Weathering is an addon for Blender that provides an easy-to-use node group
 2. Select a Mesh object with an active material.
 3. If the material does not use nodes, convert it to node-based by enabling "Use Nodes" on the material.
 4. Click the button ("Enable Weathering") 
-5. The add-on creates a group node and connects it to the active material output's Surface socket. If you enabled weathering previously and the node is present but muted, clicking the button will un-mute it.
-6. To disable weathering, click the button again (it toggles the node group's mute state).
+5. The add-on creates a group node and connects it to the active material output's Surface socket.
 
 ## Roadmap
 
